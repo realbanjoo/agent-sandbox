@@ -1,54 +1,22 @@
 # dev-tools
 
-Small, independent tools for running AI coding agents (or any untrusted build) safely and keeping their pull requests
-reviewable. Python 3 standard library and bash only. MIT.
+Small, independent tools for running AI coding agents (or any untrusted build) safely on disposable cloud VMs.
+Python 3 standard library and bash only. MIT.
 
 | Folder | What it is | Use it for |
 |---|---|---|
-| [`gate/`](#gate) | Checks on a branch against its base, and a GitHub Action | Any pull request: test-file rules, size, requirement traceability, tests first, no new duplicated code |
 | [`sandbox/`](#sandbox) | Run code without the caller's tokens, home or state; Claude Code sandbox settings; a leak probe | Tests, installs and dev servers of a project you don't trust, on a Linux VM |
 | [`hetzner/`](#hetzner) | A Hetzner Cloud client | One VM per project, created on demand, reused, deleted when idle |
 
-Pin a version by commit. In a workflow:
+Pin a version by commit. In a workflow, to get the files (for example to send them to a VM):
 
 ```yaml
-- uses: realbanjoo/dev-tools/gate@<commit>        # the gate on a pull request
-- uses: realbanjoo/dev-tools@<commit>             # just the files: steps.<id>.outputs.path
+- uses: realbanjoo/dev-tools@<commit>             # steps.devtools.outputs.path
   id: devtools
 ```
 
 Releases: every change goes through a pull request with a green `tests` check; merging one that changes `VERSION`
 tags `vX.Y.Z`. See [CHANGELOG.md](CHANGELOG.md).
-
-## gate
-
-```
-gate-tests      [--base REF] [--spec FILE] [--require-new-tests]
-gate-branch     [--base REF] [--max-lines N] [--branch-prefix P] [--spec FILE] [--intake FILE]
-gate-red-green  --checks FILE [--base REF] [--run COMMAND]
-gate-dup        [--base REF] [--tolerance LINES] [--run COMMAND] [--cache DIR]
-```
-
-Run in the checkout of the branch. Each prints `ok: <check>` or `FAILED: <check>` with how to fix it, and exits 1 when
-a check failed.
-
-- **gate-tests**: an existing test file may change only when the spec lists it, backticked, under `## Test changes`;
-  with `--require-new-tests`, source changes need a test added or changed. New test files are always fine.
-- **gate-branch**:
-  - `clean`: nothing uncommitted or untracked;
-  - `size`: at most N changed lines of source (tests, lock files and generated folders don't count);
-  - `trace` (with `--spec`): every `FR-`/`NFR-` ID under `## Requirements` is named by a test the branch adds or changes;
-  - `scope` (with `--intake`): `RESCOPED: yes` needs a non-empty `## Dropped`.
-- **gate-red-green**: when the branch changes tests and code, the last commit that adds tests on their own must *fail*
-  the checks (a bash script), in a throwaway checkout. Tests that pass without the code test nothing.
-- **gate-dup**: jscpd (pinned) on the branch and on its base; fails when the branch adds duplicated lines. A ratchet:
-  existing copies don't block. Skipped without Node.js.
-
-`--run` runs project code through a prefix, for example `sandbox-run --`. Pass `--spec` and `--intake` from a place the
-branch cannot change (not from the branch's own checkout).
-
-The Action (`gate/action.yml`) runs all four on a pull request. Its inputs are `max-lines`, `spec`,
-`require-new-tests`, `checks`, `duplication` and `duplication-tolerance`.
 
 ## sandbox
 

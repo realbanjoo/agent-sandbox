@@ -2,7 +2,7 @@ name: "dev-tools"
 description: "Makes this pinned version of dev-tools available: its folder is the `path` output (to ship the tools elsewhere, for example to a VM)"
 outputs:
   path:
-    description: "The folder holding this version of dev-tools (gate/, sandbox/, hetzner/)"
+    description: "The folder holding this version of dev-tools (sandbox/, hetzner/)"
     value: ${{ steps.where.outputs.path }}
 runs:
   using: composite
