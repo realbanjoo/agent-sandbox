@@ -1,0 +1,45 @@
+#!/usr/bin/env python3
+"""Root: prepare a Linux host for both sandboxes (Ubuntu 24.04 tested).
+
+    setup-host [--no-packages]
+
+  - installs bubblewrap and socat (Claude Code's sandbox), unless --no-packages;
+  - lets bwrap use user namespaces where AppArmor forbids them to unprivileged programs (Ubuntu 24.04 and later):
+    a profile for /usr/bin/bwrap only.
+The systemd sandbox (sandbox-run) needs nothing more than systemd. Safe to run again.
+"""
+import subprocess
+import sys
+from pathlib import Path
+
+PROFILE = """abi <abi/4.0>,
+include <tunables/global>
+
+# dev-tools: Ubuntu 24.04 forbids unprivileged user namespaces by default; bubblewrap (Claude Code's sandbox) needs
+# them. Only bwrap gets the exception.
+profile bwrap /usr/bin/bwrap flags=(unconfined) {
+  userns,
+  include if exists <local/bwrap>
+}
+"""
+
+
+def main(argv):
+    if "--no-packages" not in argv:
+        env = {"DEBIAN_FRONTEND": "noninteractive", "PATH": "/usr/sbin:/usr/bin:/sbin:/bin"}
+        subprocess.run(["apt-get", "install", "-y", "-q", "bubblewrap", "socat"], check=True, env=env)
+    prof = Path("/etc/apparmor.d/bwrap")
+    if not Path("/etc/apparmor.d").is_dir():
+        print("setup-host: no AppArmor: nothing to allow")
+        return 0
+    if not prof.exists() or prof.read_text() != PROFILE:
+        prof.write_text(PROFILE)
+        if subprocess.run(["apparmor_parser", "-r", str(prof)]).returncode != 0:
+            print("setup-host: WARNING: the AppArmor profile for bwrap could not be loaded", file=sys.stderr)
+            return 1
+    print("setup-host: bwrap allowed")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

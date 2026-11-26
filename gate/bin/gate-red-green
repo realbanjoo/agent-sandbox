@@ -1,0 +1,93 @@
+#!/usr/bin/env python3
+"""gate-red-green - tests first, checked by running them.
+
+Usage: gate-red-green --checks FILE [--dir DIR] [--base REF] [--run COMMAND]
+Run after the project's checks passed on the branch. When the branch changes both tests and source code, it needs a
+commit that changes only tests, before the code ("tests first"). The checks (FILE, a bash script) then run on that
+commit, in a throwaway checkout next to DIR: they must fail there, since the code they test does not exist yet. A branch
+that changes only tests, or only code (gate-tests handles that), is not checked here.
+--run: a command prefix to run the checks through, for example `sandbox-run --`; default: `bash -s` directly.
+Prints `ok: tests first` or `FAILED: tests first` with how to fix it; exit 1 when it failed.
+"""
+import shlex
+import subprocess
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parent / "lib"))
+sys.dont_write_bytecode = True
+from gate_branch import CODE_EXT, base_ref, git, is_test, merge_base  # noqa: E402
+
+
+def files_of(cwd, commit):
+    out = git(cwd, "diff-tree", "--no-commit-id", "--name-status", "-r", "-M", commit)
+    return [(l.split("\t")[0][0], l.split("\t")[-1]) for l in out.splitlines() if l.strip()]
+
+
+def is_code(path):
+    return not is_test(path) and Path(path).suffix in CODE_EXT
+
+
+def tests_first_commit(cwd, base):
+    """-> (commit or None, why). The first commit that adds or changes tests only, followed later by code."""
+    commits = git(cwd, "rev-list", "--reverse", "%s..HEAD" % merge_base(cwd, base)).split()
+    first_tests, code_after = None, False
+    for c in commits:
+        fs = files_of(cwd, c)
+        tests = [p for s, p in fs if is_test(p) and s in "AM"]
+        code = [p for s, p in fs if is_code(p)]
+        if first_tests is None and tests and not code:
+            first_tests = c
+        elif first_tests is not None and code:
+            code_after = True
+    return first_tests, code_after
+
+
+def main(argv):
+    opts = {"--dir": ".", "--base": None, "--checks": None, "--run": ""}
+    i = 0
+    while i < len(argv):
+        if argv[i] in opts and i + 1 < len(argv):
+            opts[argv[i]] = argv[i + 1]
+            i += 1
+        else:
+            print(__doc__.strip(), file=sys.stderr)
+            return 2
+        i += 1
+    cwd = str(Path(opts["--dir"]).resolve())
+    if not opts["--checks"] or not Path(opts["--checks"]).is_file():
+        print("gate-red-green: --checks FILE is required", file=sys.stderr)
+        return 2
+    base = base_ref(cwd, opts["--base"])
+    mb = merge_base(cwd, base)
+    changed = [l.split("\t")[-1] for l in git(cwd, "diff", "--name-status", mb, "HEAD").splitlines()]
+    if not any(is_test(p) for p in changed) or not any(is_code(p) for p in changed):
+        print("ok: tests first (not needed: the branch does not change both tests and code)")
+        return 0
+    commit, code_after = tests_first_commit(cwd, base)
+    if not commit or not code_after:
+        print("FAILED: tests first")
+        print("  - no commit adds the new tests on their own before the code. HOW TO FIX: commit the tests first "
+              "(`test: ...`, test files only), then the code")
+        return 1
+    red = Path(cwd).parent / ("%s-red" % Path(cwd).name)
+    subprocess.run(["git", "-C", cwd, "worktree", "remove", "--force", str(red)], capture_output=True)
+    git(cwd, "worktree", "add", "-q", "--detach", str(red), commit)
+    try:
+        with open(opts["--checks"]) as f:
+            r = subprocess.run(shlex.split(opts["--run"]) + ["bash", "-s"], cwd=str(red), stdin=f, capture_output=True,
+                               text=True)
+    finally:
+        subprocess.run(["git", "-C", cwd, "worktree", "remove", "--force", str(red)], capture_output=True)
+    if r.returncode == 0:
+        print("FAILED: tests first")
+        print("  - the checks pass on %s, the commit with only the new tests: they test nothing the code adds. "
+              "HOW TO FIX: make each new test check the new behaviour, so it fails without the code" % commit[:10])
+        return 1
+    print("ok: tests first (the checks fail on %s, before the code, and pass now)" % commit[:10])
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

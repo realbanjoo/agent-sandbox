@@ -1,0 +1,6 @@
+#!/bin/bash
+# Root, through a sudo rule for one user: run a command in the sandbox as that user (lib/sandbox.py), never as root.
+# The rule names this file's installed path, which root owns, like the rest of dev-tools.
+set -euo pipefail
+here="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+exec /usr/bin/python3 -I "$here/lib/sandbox.py" "$@"

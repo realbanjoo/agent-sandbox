@@ -1,0 +1,67 @@
+name: "dev-tools gate"
+description: "Checks on a pull request's branch: test-file rules, clean tree, size, requirement traceability, tests first, no new duplicated code"
+inputs:
+  base:
+    description: "Base branch to compare with (default: the pull request's base)"
+    default: ""
+  max-lines:
+    description: "Largest change, in changed lines of source (tests, lock files and generated folders not counted)"
+    default: "600"
+  spec:
+    description: "A spec file with `## Requirements` (FR-/NFR- IDs that tests must name) and `## Test changes`; empty: none"
+    default: ""
+  require-new-tests:
+    description: "Fail when source code changes without any test added or changed"
+    default: "false"
+  checks:
+    description: "A bash script of the project's checks; when set, the tests-first commit must fail it (red-green)"
+    default: ""
+  duplication:
+    description: "Fail when the branch adds duplicated code (jscpd, needs Node.js)"
+    default: "true"
+  duplication-tolerance:
+    description: "Duplicated lines the branch may add"
+    default: "0"
+runs:
+  using: composite
+  steps:
+    - name: Fetch the base
+      shell: bash
+      env:
+        BASE: ${{ inputs.base || github.base_ref }}
+      run: |
+        [ -n "$BASE" ] || { echo "gate: no base branch (not a pull request): set the base input"; exit 2; }
+        git fetch --no-tags --quiet origin "+refs/heads/$BASE:refs/remotes/origin/$BASE"
+        git fetch --no-tags --quiet --unshallow origin 2>/dev/null || true
+        echo "GATE_BASE=origin/$BASE" >> "$GITHUB_ENV"
+    - name: Test rules
+      shell: bash
+      env:
+        SPEC: ${{ inputs.spec }}
+        NEW_TESTS: ${{ inputs.require-new-tests }}
+      run: |
+        args=(--base "$GATE_BASE")
+        [ -n "$SPEC" ] && args+=(--spec "$SPEC")
+        [ "$NEW_TESTS" = "true" ] && args+=(--require-new-tests)
+        python3 "$GITHUB_ACTION_PATH/bin/gate-tests" "${args[@]}"
+    - name: Branch checks
+      shell: bash
+      env:
+        SPEC: ${{ inputs.spec }}
+        MAX: ${{ inputs.max-lines }}
+      run: |
+        args=(--base "$GATE_BASE" --max-lines "$MAX")
+        [ -n "$SPEC" ] && args+=(--spec "$SPEC")
+        python3 "$GITHUB_ACTION_PATH/bin/gate-branch" "${args[@]}"
+    - name: Tests first
+      if: inputs.checks != ''
+      shell: bash
+      env:
+        CHECKS: ${{ inputs.checks }}
+      run: python3 "$GITHUB_ACTION_PATH/bin/gate-red-green" --base "$GATE_BASE" --checks "$CHECKS"
+    - name: Duplication
+      if: inputs.duplication == 'true'
+      shell: bash
+      env:
+        TOL: ${{ inputs.duplication-tolerance }}
+      run: python3 "$GITHUB_ACTION_PATH/bin/gate-dup" --base "$GATE_BASE" --tolerance "$TOL"

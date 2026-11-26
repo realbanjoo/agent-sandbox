@@ -1,0 +1,135 @@
+#!/usr/bin/env python3
+"""gate-branch - checks on a branch that need no project code.
+
+Usage: gate-branch [--dir DIR] [--base REF] [--max-lines N] [--branch-prefix P] [--spec FILE] [--intake FILE]
+
+  clean   the checkout has no uncommitted or untracked file (and, with --branch-prefix, the branch name starts with P)
+  size    at most N changed lines of source (default 600; tests, lock files and generated folders not counted)
+  trace   with --spec: every FR-/NFR- requirement under the spec's `## Requirements` is named by at least one test the
+          branch adds or changes (FR-003 matches test_FR003_..., fr_003, FR-003)
+  scope   with --intake: `RESCOPED: yes` only with a non-empty `## Dropped` section, `RESCOPED: no` only without one
+Prints `ok: <check>` or `FAILED: <check>` with how to fix it; exit 1 when one failed.
+"""
+import re
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parent / "lib"))
+sys.dont_write_bytecode = True
+from gate_branch import base_ref, git, is_test, merge_base  # noqa: E402
+
+NOT_COUNTED = re.compile(r"(^|/)(node_modules|dist|build|vendor|\.venv|__snapshots__|coverage)/|"
+                         r"(package-lock\.json|pnpm-lock\.yaml|yarn\.lock|poetry\.lock|Cargo\.lock|go\.sum|uv\.lock)$")
+REQ_ID = re.compile(r"\b((?:FR|NFR(?:-[A-Z]+)?)-(\d{3}))\b")
+
+
+def check_clean(cwd, prefix):
+    bad = []
+    st = git(cwd, "status", "--porcelain")
+    if st.strip():
+        bad.append("uncommitted or untracked files: %s. HOW TO FIX: commit them (explicit paths) or delete them"
+                   % ", ".join(l[3:] for l in st.splitlines()[:5]))
+    br = git(cwd, "branch", "--show-current").strip()
+    if prefix and not br.startswith(prefix):
+        bad.append("the branch is %r, not a %s... branch" % (br, prefix))
+    return bad
+
+
+def check_size(cwd, base, limit):
+    total, files = 0, []
+    for line in git(cwd, "diff", "--numstat", merge_base(cwd, base)).splitlines():
+        a, d, path = line.split("\t", 2)
+        if a == "-" or is_test(path) or NOT_COUNTED.search(path):
+            continue
+        n = int(a) + int(d)
+        total += n
+        files.append((n, path))
+    if total > limit:
+        top = ", ".join("%s (%d)" % (p, n) for n, p in sorted(files, reverse=True)[:5])
+        return ["%d changed lines of source, more than %d: %s. HOW TO FIX: this is more than one reviewable PR: split "
+                "it, or make the change smaller" % (total, limit, top)]
+    return []
+
+
+def requirement_ids(spec):
+    text, cur, ids = spec.read_text(errors="replace"), None, []
+    for line in text.splitlines():
+        m = re.match(r"^##\s+(.+?)\s*$", line)
+        if m:
+            cur = m.group(1)
+        elif cur == "Requirements":
+            ids += [m.group(1) for m in REQ_ID.finditer(line)]
+    return list(dict.fromkeys(ids))
+
+
+def check_trace(cwd, base, spec):
+    if not spec or not spec.is_file():
+        return []
+    ids = requirement_ids(spec)
+    added, cur = [], ""
+    for line in git(cwd, "diff", "-U0", merge_base(cwd, base)).splitlines():
+        if line.startswith("+++ "):
+            cur = line[6:] if line.startswith("+++ b/") else ""
+        elif line.startswith("+") and is_test(cur):
+            added.append(line)
+    text = "\n".join(added)
+    missing = []
+    for i in ids:
+        kind, num = i.rsplit("-", 1)
+        pat = re.compile(r"(?<![A-Za-z])%s[-_]?0*%d(?!\d)" % ("[-_]?".join(map(re.escape, kind.split("-"))), int(num)), re.I)
+        if not pat.search(text):
+            missing.append(i)
+    if missing:
+        return ["no new or changed test names %s. HOW TO FIX: add a test whose name contains the ID (for example "
+                "test_%s_...) for each requirement" % (", ".join(missing), missing[0].replace("-", ""))]
+    return []
+
+
+def check_scope(intake):
+    if not intake or not intake.is_file():
+        return []
+    text = intake.read_text(errors="replace")
+    m = re.search(r"^RESCOPED:\s*(yes|no)\s*$", text, re.M)
+    d = re.search(r"^## Dropped\s*\n(.*?)(?=^## |\Z)", text, re.M | re.S)
+    dropped = (d.group(1).strip() if d else "")
+    empty = dropped.rstrip(".").lower() in ("", "nothing", "none")
+    if m and m.group(1) == "yes" and empty:
+        return ["intake says RESCOPED: yes but lists nothing under ## Dropped: what was left out must be named, so the "
+                "owner can open an issue for it"]
+    if m and m.group(1) == "no" and not empty:
+        return ["intake lists dropped scope but says RESCOPED: no"]
+    return []
+
+
+def main(argv):
+    opts = {"--dir": ".", "--base": None, "--max-lines": "600", "--branch-prefix": None, "--spec": None, "--intake": None}
+    i = 0
+    while i < len(argv):
+        if argv[i] in opts and i + 1 < len(argv):
+            opts[argv[i]] = argv[i + 1]
+            i += 1
+        else:
+            print(__doc__.strip(), file=sys.stderr)
+            return 2
+        i += 1
+    cwd = opts["--dir"]
+    base = base_ref(cwd, opts["--base"])
+    spec = Path(opts["--spec"]) if opts["--spec"] else None
+    intake = Path(opts["--intake"]) if opts["--intake"] else None
+    failed = False
+    for name, bad in (("clean", check_clean(cwd, opts["--branch-prefix"])),
+                      ("size", check_size(cwd, base, int(opts["--max-lines"]))),
+                      ("trace", check_trace(cwd, base, spec)), ("scope", check_scope(intake))):
+        if bad:
+            failed = True
+            print("FAILED: %s" % name)
+            for b in bad:
+                print("  - " + b)
+        else:
+            print("ok: %s" % name)
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

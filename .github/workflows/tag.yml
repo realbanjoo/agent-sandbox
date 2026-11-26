@@ -1,0 +1,21 @@
+# After a merge to main: tag v<VERSION> if that tag does not exist yet.
+name: tag
+on:
+  push:
+    branches: [main]
+    paths: [VERSION]
+permissions:
+  contents: write
+jobs:
+  tag:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683   # v4.2.2
+        with:
+          fetch-depth: 0
+      - run: |
+          v="v$(tr -d '[:space:]' < VERSION)"
+          [[ "$v" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "VERSION is not X.Y.Z"; exit 1; }
+          if git rev-parse -q --verify "refs/tags/$v" >/dev/null; then echo "$v exists"; exit 0; fi
+          git tag "$v" "$GITHUB_SHA" && git push origin "$v" && echo "tagged $v"

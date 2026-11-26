@@ -1,0 +1,105 @@
+#!/usr/bin/env python3
+"""gate-dup - no new copy-pasted code: a ratchet against the base.
+
+Usage: gate-dup [--dir DIR] [--base REF] [--tolerance LINES] [--run COMMAND] [--cache DIR]
+Runs the copy/paste detector jscpd (pinned, through npx) on the branch and on its merge base, and fails when the branch
+adds more duplicated lines than LINES (default 0). The failure lists only the new copies, with file and line ranges.
+Without Node.js, or when jscpd cannot run, the check is skipped with a note: a tool problem never blocks a branch.
+--run: a command prefix to run jscpd through, for example `sandbox-run --`. --cache: where the reports go (it must be
+writable from inside that command); default: $XDG_CACHE_HOME or ~/.cache, then dev-tools/jscpd.
+"""
+import json
+import os
+import shlex
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parent / "lib"))
+sys.dont_write_bytecode = True
+from gate_branch import base_ref, git, merge_base  # noqa: E402
+
+JSCPD = "jscpd@4.0.5"
+IGNORE = ("**/node_modules/**,**/dist/**,**/build/**,**/vendor/**,**/.venv/**,**/coverage/**,**/__snapshots__/**,"
+          "**/*.lock,**/package-lock.json,**/pnpm-lock.yaml,**/*.min.js,**/fixtures/**,**/.git/**")
+
+
+def scan(checkout, name, run, cache):
+    """-> jscpd's JSON report for checkout, or None."""
+    out = cache / "jscpd" / name
+    shutil.rmtree(out, ignore_errors=True)
+    cmd = ('npx --yes %s --silent --min-tokens 50 --min-lines 6 --reporters json --output %s --ignore "%s" . '
+           '>/dev/null 2>&1; echo $?' % (JSCPD, shlex.quote(str(out)), IGNORE))
+    subprocess.run(shlex.split(run) + ["bash", "-c", cmd], cwd=str(checkout), capture_output=True, text=True)
+    try:
+        return json.loads((out / "jscpd-report.json").read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def pairs(report):
+    out = {}
+    for d in report.get("duplicates", []):
+        a, b = d.get("firstFile", {}), d.get("secondFile", {})
+        key = (tuple(sorted((a.get("name", ""), b.get("name", "")))), (d.get("fragment") or "").strip())
+        out[key] = "%s:%s-%s <-> %s:%s-%s (%s lines)" % (a.get("name"), a.get("start"), a.get("end"), b.get("name"),
+                                                        b.get("start"), b.get("end"), d.get("lines"))
+    return out
+
+
+def lines(report):
+    return int(((report.get("statistics") or {}).get("total") or {}).get("duplicatedLines") or 0)
+
+
+def compare(base, head, tolerance):
+    """-> (ok, message lines)."""
+    added = lines(head) - lines(base)
+    if added <= tolerance:
+        return True, ["ok: duplication (%+d duplicated lines)" % added]
+    old = pairs(base)
+    new = [v for k, v in pairs(head).items() if k not in old]
+    msg = ["FAILED: duplication", "  - the branch adds %d duplicated lines (tolerance %d). HOW TO FIX: call or extend the "
+           "existing code instead of copying it; extract what both places need into one shared function (in its own "
+           "commit that changes no behaviour). New copies:" % (added, tolerance)]
+    msg += ["    " + p for p in new[:10]]
+    return False, msg
+
+
+def main(argv):
+    default_cache = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "dev-tools"
+    opts = {"--dir": ".", "--base": None, "--tolerance": "0", "--run": "", "--cache": str(default_cache)}
+    i = 0
+    while i < len(argv):
+        if argv[i] in opts and i + 1 < len(argv):
+            opts[argv[i]] = argv[i + 1]
+            i += 1
+        else:
+            print(__doc__.strip(), file=sys.stderr)
+            return 2
+        i += 1
+    cwd = str(Path(opts["--dir"]).resolve())
+    if not shutil.which("npx"):
+        print("ok: duplication (skipped: no Node.js here for jscpd)")
+        return 0
+    job, run, cache = Path(cwd).name, opts["--run"], Path(opts["--cache"])
+    mb = merge_base(cwd, base_ref(cwd, opts["--base"]))
+    head = scan(cwd, job + "-head", run, cache)
+    tmp = Path(cwd).parent / ("%s-dupbase" % job)
+    subprocess.run(["git", "-C", cwd, "worktree", "remove", "--force", str(tmp)], capture_output=True)
+    git(cwd, "worktree", "add", "-q", "--detach", str(tmp), mb)
+    try:
+        base = scan(tmp, job + "-base", run, cache)
+    finally:
+        subprocess.run(["git", "-C", cwd, "worktree", "remove", "--force", str(tmp)], capture_output=True)
+    if head is None or base is None:
+        print("ok: duplication (skipped: jscpd could not run here)")
+        return 0
+    ok, msg = compare(base, head, int(opts["--tolerance"]))
+    print("\n".join(msg))
+    return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

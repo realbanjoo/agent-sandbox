@@ -1,0 +1,10 @@
+#!/bin/bash
+# sandbox-run [--timeout MINUTES] [--env PORT=N] -- <command> [args...]
+# Run a command in the sandbox (lib/sandbox.py): this checkout only, without the caller's home, tokens or state.
+# Inside the sandbox already (DEVTOOLS_SANDBOXED): run the command as it is.
+if [ -n "${DEVTOOLS_SANDBOXED:-}" ]; then
+  while [ $# -gt 0 ] && [ "$1" != "--" ]; do shift; done; shift
+  exec "$@"
+fi
+here="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+exec ${DEVTOOLS_SANDBOX_CMD:-sudo -n "$here/root/sandbox-root"} "$@"
