@@ -22,8 +22,12 @@ Then write its configuration, root-owned, `/etc/agent-sandbox/me.json`:
 
 ```json
 {"user": "me", "work": "/home/me/code", "cache": "/home/me/.cache/agent-sandbox",
- "hide": [], "timeout_minutes": 30, "network": "on", "env": {}}
+ "hide": [], "timeout_minutes": 30, "network": "on", "env": {}, "path": []}
 ```
+
+`path` lists absolute folders put before the system's `/usr/local/bin:/usr/bin:/bin` inside the sandbox, for tools
+installed outside the system folders (a Node.js of your own, say). Since the configuration is root's, only root decides
+which folders the sandboxed code runs programs from.
 
 Any pip-compatible tool works the same way (`uv pip install`, a `requirements.txt` line, Poetry or PDM with the git
 URL), and so does a plain clone: `PYTHONPATH=src python3 -m agent_sandbox.install ...`. Pin a tag or a commit.
@@ -51,7 +55,8 @@ command in a transient systemd unit, as you and never as root, in place:
 - the rest of `/home` is an empty tmpfs, so tokens in `~/.config` and the other checkouts are out of sight, along with
   every path under `hide`;
 - the system is read-only, `/tmp` is private, nothing gains privileges, and the time limit applies;
-- the environment is clean: no token, `AGENT_SANDBOX=1`, plus the configured `env`;
+- the environment is clean: no token, `AGENT_SANDBOX=1`, plus the configured `env`, and `PATH` is the configured
+  `path` then the system's;
 - the network is `on`, or `off` for local connections only.
 
 Only the configuration's `user` may use a named install. Inside a sandbox, `sandbox-run` runs the command as it is.

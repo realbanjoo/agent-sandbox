@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.0
+
+- **New:** `path` in the configuration: absolute folders put before the system's PATH inside the sandbox, for tools
+  installed outside `/usr/local/bin`, `/usr/bin` and `/bin`. factory-bootstrap needs it: each factory instance has
+  its own Node.js and pnpm in its own folder, and the project's checks run in the sandbox.
+
 ## 0.1.0
 
 First version, extracted from factory-bootstrap and made independent of it:

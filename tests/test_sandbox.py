@@ -108,6 +108,20 @@ class Sandbox(Base):
         self.assertIn("`user`", str(e.exception))
 
 
+class ConfiguredPath(Base):
+    def test_path_folders_come_before_the_system_and_only_absolute_ones(self):                 # 0.2.0
+        sb = self.module(AGENT_SANDBOX_CONFIG=str(self.cfg))
+        self.config(path=["/opt/inst/tools/node/bin"])
+        env = sb.environment(sb.config(self.cfg))
+        self.assertEqual(env["PATH"], "/opt/inst/tools/node/bin:/usr/local/bin:/usr/bin:/bin")
+        self.config()
+        self.assertEqual(sb.environment(sb.config(self.cfg))["PATH"], "/usr/local/bin:/usr/bin:/bin")
+        for bad in (["relative/bin"], ["/opt/x:/tmp"], ["/opt/$HOME"]):
+            self.config(path=bad)
+            with self.assertRaises(SystemExit):
+                sb.config(self.cfg)
+
+
 class Command(Base):
     def test_sandbox_run(self):
         self.assertEqual(sandbox_run.command(["--timeout", "5", "--", "echo", "hi"], {"AGENT_SANDBOX": "1"}), ["echo", "hi"])

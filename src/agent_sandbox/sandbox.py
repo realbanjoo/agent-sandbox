@@ -40,6 +40,7 @@ NAME = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
 PATH = "/usr/local/bin:/usr/bin:/bin"
 PASS = re.compile(r"(PORT)=([0-9]{1,5})")       # the only values a caller may pass in
 ENV_NAME = re.compile(r"[A-Z][A-Z0-9_]{0,63}")
+PATH_DIR = re.compile(r"/[A-Za-z0-9._/+-]{0,250}")  # extra PATH folders, before the system's (root-owned config)
 
 
 def usage():
@@ -84,9 +85,13 @@ def config(path):
     if not all(c.get(k) for k in need):
         raise SystemExit("sandbox: %s must set %s" % (path, ", ".join("`%s`" % k for k in need)))
     env = {k: str(v) for k, v in (c.get("env") or {}).items() if ENV_NAME.fullmatch(str(k))}
+    path = [str(d) for d in c.get("path") or []]
+    bad = [d for d in path if not PATH_DIR.fullmatch(d)]
+    if bad:
+        raise SystemExit("sandbox: %s: `path` takes absolute folders only (%s)" % (path, ", ".join(bad)))
     return {"user": c.get("user"), "work": Path(c["work"]), "cache": Path(c["cache"]),
             "hide": [str(h) for h in c.get("hide") or []], "timeout_minutes": int(c.get("timeout_minutes") or 30),
-            "network": c.get("network") or "on", "env": env}
+            "network": c.get("network") or "on", "env": env, "path": path}
 
 
 def git_dir(src, work):
@@ -101,7 +106,8 @@ def environment(cfg):
     cache = cfg["cache"]
     env = dict(cfg["env"])
     env.update({"HOME": str(cache / "home"), "XDG_CACHE_HOME": str(cache / "xdg"), "npm_config_cache": str(cache / "npm"),
-                "PIP_CACHE_DIR": str(cache / "pip"), "CI": "true", "LANG": "C.UTF-8", "PATH": PATH,
+                "PIP_CACHE_DIR": str(cache / "pip"), "CI": "true", "LANG": "C.UTF-8",
+                "PATH": ":".join(list(cfg.get("path") or []) + [PATH]),
                 "GIT_CONFIG_NOSYSTEM": "1", "COREPACK_ENABLE_DOWNLOAD_PROMPT": "0", "AGENT_SANDBOX": "1"})
     return env
 
