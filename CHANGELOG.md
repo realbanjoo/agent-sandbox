@@ -2,9 +2,11 @@
 
 ## 0.1.0
 
-First version, extracted from factory-bootstrap 0.21.0 and made independent of it:
+First version, extracted from factory-bootstrap and made independent of it:
 
-- `sandbox/`: `sandbox-run` (systemd, configured by a root-owned `/etc/dev-tools/sandbox.json`), Claude Code sandbox
-  settings, the leak probe, `setup-host` (bubblewrap, socat, the AppArmor rule for bwrap).
-- `hetzner/`: the Hetzner Cloud client (`ensure_server` with fallbacks, host key pinning, SSH).
-- The root `action.yml` makes a pinned version available to another action (`outputs.path`).
+- `sandbox-run`: untrusted code in place in a checkout, in a systemd unit, without the caller's home, tokens or state.
+- Named installs (`agent-sandbox-install --name NAME --user USER`): each has its own root-owned helper, sudo rule and
+  configuration `/etc/agent-sandbox/NAME.json`, used only by its own user, so several versions can sit side by side.
+- `agent-sandbox-claude-settings`: strict settings for Claude Code's own sandbox.
+- `agent-sandbox-probe`: checks that both sandboxes hold.
+- A standard Python package (no dependencies), installed from a git tag or commit with any pip-compatible tool.

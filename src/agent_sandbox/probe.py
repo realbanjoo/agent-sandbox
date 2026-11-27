@@ -1,5 +1,9 @@
 """Check that a sandbox holds, before trusting it: run a probe inside and report every leak found.
 
+    agent-sandbox-probe --run "sandbox-run --name NAME --timeout 2 --" --dir DIR [--secret-file F]...
+                        [--secret-dir D]... [--secret-env V]... [--outside PATH] [--claude-settings FILE]
+prints one problem per line and exits 1 when there is any (0: both sandboxes hold). From Python:
+
     problems = probe(["sandbox-run", "--timeout", "2", "--"], cwd, secret_files=[...], secret_dirs=[...],
                      secret_env=[...], outside=path_outside_the_checkout)
 
@@ -58,7 +62,7 @@ def claude_sandbox_problems(settings_file):
         p = subprocess.run(["bwrap", "--ro-bind", "/", "/", "--dev", "/dev", "--unshare-all", "--die-with-parent", "true"],
                            capture_output=True, text=True)
         if p.returncode != 0:
-            bad.append("bubblewrap cannot create its sandbox (%s): on Ubuntu 24.04 run sandbox/setup-host"
+            bad.append("bubblewrap cannot create its sandbox (%s): on Ubuntu 24.04 run agent-sandbox-install"
                        % (p.stderr.strip()[:120] or p.returncode))
     st = Path(settings_file or "")
     try:
@@ -70,3 +74,34 @@ def claude_sandbox_problems(settings_file):
     except (OSError, ValueError):
         bad.append("the sandbox settings are missing (%s)" % st)
     return bad
+
+
+def main(argv=None):
+    import sys
+    argv = sys.argv[1:] if argv is None else list(argv)
+    one = {"--run": None, "--dir": None, "--outside": None, "--claude-settings": None}
+    many = {"--secret-file": [], "--secret-dir": [], "--secret-env": []}
+    while argv:
+        a = argv.pop(0)
+        if a in one and argv:
+            one[a] = argv.pop(0)
+        elif a in many and argv:
+            many[a].append(argv.pop(0))
+        else:
+            one["--run"] = None
+            break
+    if not one["--run"] or not one["--dir"]:
+        print("usage: " + __doc__.split("\n\n")[1].split("\nprints")[0].strip(), file=sys.stderr)
+        return 2
+    bad = probe(shlex.split(one["--run"]), one["--dir"], secret_files=many["--secret-file"],
+                secret_dirs=many["--secret-dir"], secret_env=many["--secret-env"] or CREDENTIAL_ENV,
+                outside=one["--outside"])
+    if one["--claude-settings"]:
+        bad += claude_sandbox_problems(one["--claude-settings"])
+    for b in bad:
+        print(b)
+    return 1 if bad else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,5 +1,8 @@
 """Settings for Claude Code's own sandbox around an agent's shell commands, passed with `claude --settings FILE`.
 
+    agent-sandbox-claude-settings [--deny-read PATH]... [--exclude COMMAND]... [--allow-domain DOMAIN]...
+                                  [--allow-write PATH]... [--credential-env NAME]...   > settings.json
+
 Settings given on the command line win over the repository's own `.claude/settings*.json`, so a repository cannot
 loosen them. Commands run sandboxed (bubblewrap on Linux; needs `bwrap` and `socat`), with no unsandboxed fallback:
   - reads denied: every path in `deny_read` (tokens, credentials, state); file tools denied the same paths;
@@ -36,3 +39,29 @@ def settings(deny_read=(), excluded=(), allowed_domains=(), allow_write=("~/.npm
                         "credentials": {"envVars": [{"name": v, "mode": "deny"}
                                                     for v in dict.fromkeys(CREDENTIAL_ENV + list(credential_env))]}},
             "permissions": {"deny": list(dict.fromkeys(deny))}}
+
+
+OPTIONS = {"--deny-read": "deny_read", "--exclude": "excluded", "--allow-domain": "allowed_domains",
+           "--allow-write": "allow_write", "--credential-env": "credential_env"}
+
+
+def main(argv=None):
+    """Print the settings as JSON. Each option is repeatable and adds to the defaults."""
+    import json
+    import sys
+    argv = sys.argv[1:] if argv is None else list(argv)
+    args = {k: [] for k in OPTIONS.values()}
+    while argv:
+        a = argv.pop(0)
+        if a not in OPTIONS or not argv:
+            print("usage: " + __doc__.split("\n\n")[1].strip(), file=sys.stderr)
+            return 2
+        args[OPTIONS[a]].append(argv.pop(0))
+    if not args["allow_write"]:
+        args.pop("allow_write")
+    print(json.dumps(settings(**args), indent=2, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

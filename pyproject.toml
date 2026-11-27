@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-sandbox"
+dynamic = ["version"]
+description = "Run untrusted code and AI agents' commands without your tokens, home or state (Linux, systemd); Claude Code sandbox settings and a leak probe"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+dependencies = []
+classifiers = ["Operating System :: POSIX :: Linux", "Programming Language :: Python :: 3"]
+
+[project.scripts]
+sandbox-run = "agent_sandbox.sandbox_run:main"
+agent-sandbox-claude-settings = "agent_sandbox.claude_settings:main"
+agent-sandbox-probe = "agent_sandbox.probe:main"
+agent-sandbox-install = "agent_sandbox.install:main"
+
+[project.urls]
+Source = "https://github.com/realbanjoo/agent-sandbox"
+Changelog = "https://github.com/realbanjoo/agent-sandbox/blob/main/CHANGELOG.md"
+
+[tool.setuptools.dynamic]
+version = {file = ["VERSION"]}
